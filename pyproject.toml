@@ -2,7 +2,10 @@
 name = "reliable-event-ingestion-lab"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "confluent-kafka>=2.15.1",
+    "psycopg[binary]>=3.3.5",
+]
 
 [dependency-groups]
 dev = [

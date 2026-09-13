@@ -1,0 +1,76 @@
+name: reliable-event-ingestion-lab
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION}
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:${REDPANDA_KAFKA_PORT}
+      - --rpc-addr=redpanda:33145
+      - --advertise-rpc-addr=redpanda:33145
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=info
+    ports:
+      - "${REDPANDA_KAFKA_PORT}:19092"
+      - "19644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    networks:
+      - ingestion-network
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:${REDPANDA_CONSOLE_VERSION}
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers:
+            - redpanda:9092
+        redpanda:
+          adminApi:
+            enabled: true
+            urls:
+              - http://redpanda:9644
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml
+        /app/console
+    ports:
+      - "${REDPANDA_CONSOLE_PORT}:8080"
+    depends_on:
+      - redpanda
+    networks:
+      - ingestion-network
+
+  postgres:
+    image: postgres:${POSTGRES_VERSION}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ingestion-network
+
+networks:
+  ingestion-network:
+    driver: bridge
+
+volumes:
+  redpanda-data:
+  postgres-data:
