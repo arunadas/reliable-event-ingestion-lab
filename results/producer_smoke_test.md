@@ -102,6 +102,19 @@ hidden (`UF_HIDDEN`), which CPython's `site.py` silently skips, causing
 `ModuleNotFoundError` outside of a fresh install. Forcing `copy` mode avoided
 this consistently across repeated syncs.
 
+## Known behavior: some carts purchase zero items
+
+`CartItemSavedForLater` can move an item's entire active quantity to
+saved-for-later before purchase. When that happens for every item in a
+cart, `CartPurchased` is emitted with `total_amount_minor: 0` and
+`item_count: 0`. This is arithmetically correct per the spec's own
+definition of `total_amount_minor` (sum over active, non-saved-for-later
+item quantities) and is not disallowed by any business invariant, but it
+is a real fraction of the generated fixture data: a spot check across 500
+seeds found roughly 21% of carts purchase nothing. Downstream consumer and
+reconciliation experiments that assume every generated cart produces a
+nonzero purchase should account for this rather than assume it away.
+
 ## Live broker run
 
 Docker daemon is not available in this environment. The producer was validated via unit tests only (fake producer, no live broker).
