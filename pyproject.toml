@@ -17,3 +17,18 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reliable_ingestion"]
+
+[tool.uv]
+# Force plain-copy installs instead of the macOS default of clone/CoW.
+# In some sandboxed shells the clone path was observed to intermittently
+# propagate a hidden (UF_HIDDEN) file flag onto the generated editable-install
+# .pth file; CPython's site.py silently skips hidden .pth files, which broke
+# `uv run python -m reliable_ingestion.producer ...` outside of pytest.
+link-mode = "copy"
