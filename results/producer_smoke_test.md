@@ -1,5 +1,20 @@
 # Producer Smoke Test — 2026-09-17
 
+## Update (final fix wave)
+
+This file was updated after the final whole-branch code review fix wave. Changes
+relevant to this document:
+
+- `pyproject.toml` now declares a `[build-system]` (hatchling) and pins
+  `[tool.uv] link-mode = "copy"`, so `uv sync` installs `reliable_ingestion`
+  into the venv (previously only pytest's `pythonpath = ["src"]` made it
+  importable, and `uv run python -m reliable_ingestion.producer` failed with
+  `ModuleNotFoundError` outside of pytest). Verified below.
+- Three new tests cover graceful shutdown / flush and key/event-id invariants
+  that this document previously claimed were validated without evidence; the
+  "End-to-end orchestration with graceful shutdown" bullet at the bottom of
+  this file has been corrected to cite them by name.
+
 ## Unit tests
 
 `uv run pytest tests/unit -v`
@@ -7,7 +22,7 @@
 ```
 ============================= test session starts ==============================
 platform darwin -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
-collecting ... collected 38 items
+collecting ... collected 41 items
 
 tests/unit/producer/test_cart_simulator.py::test_first_event_is_cart_created_at_version_1 PASSED
 tests/unit/producer/test_cart_simulator.py::test_last_event_is_cart_purchased PASSED
@@ -37,6 +52,9 @@ tests/unit/producer/test_main.py::test_run_is_deterministic_given_same_seed PASS
 tests/unit/producer/test_main.py::test_run_respects_max_events_limit PASSED
 tests/unit/producer/test_main.py::test_run_duplicates_when_duplicate_probability_is_one PASSED
 tests/unit/producer/test_main.py::test_run_exits_nonzero_when_publication_exhausts_retries PASSED
+tests/unit/producer/test_main.py::test_run_flushes_producer_after_normal_completion PASSED
+tests/unit/producer/test_main.py::test_run_flushes_and_returns_metrics_on_shutdown_mid_run PASSED
+tests/unit/producer/test_main.py::test_run_uses_consistent_key_per_cart_and_unique_event_ids PASSED
 tests/unit/producer/test_metrics.py::test_counters_start_at_zero PASSED
 tests/unit/producer/test_metrics.py::test_record_generated_increments_counter PASSED
 tests/unit/producer/test_metrics.py::test_record_published_tracks_count_and_average_latency PASSED
@@ -48,10 +66,41 @@ tests/unit/producer/test_publisher.py::test_publish_retries_on_failure_then_succ
 tests/unit/producer/test_publisher.py::test_publish_raises_after_max_retries_and_records_failure PASSED
 tests/unit/producer/test_publisher.py::test_publish_retries_on_callback_timeout_then_succeeds PASSED
 
-============================== 38 passed in 0.03s ==============================
+============================== 41 passed in 0.03s ==============================
 ```
 
-**Summary:** 38 passed in 0.03s
+**Summary:** 41 passed in 0.03s (38 previously + 3 new: graceful-shutdown/flush
+and key/event-id invariant tests added in the final fix wave)
+
+## Packaging check (final fix wave)
+
+`pyproject.toml` previously had no `[build-system]` section, so `reliable_ingestion`
+was only importable inside pytest via `pythonpath = ["src"]`. After adding a
+hatchling build backend and re-running `uv sync`, the module resolves without
+any `PYTHONPATH` override:
+
+```
+$ uv run python -m reliable_ingestion.producer --help
+usage: __main__.py [-h] [--broker-address BROKER_ADDRESS] [--topic TOPIC]
+                   [--events-per-second EVENTS_PER_SECOND]
+                   [--num-carts NUM_CARTS] [--max-events MAX_EVENTS]
+                   [--run-duration-seconds RUN_DURATION_SECONDS] [--seed SEED]
+                   [--duplicate-probability DUPLICATE_PROBABILITY]
+                   [--delay-probability DELAY_PROBABILITY]
+                   [--max-delay-seconds MAX_DELAY_SECONDS]
+
+Cart event generator
+...
+```
+
+Verified with a fresh `.venv` (`rm -rf .venv && uv sync`) and 5 repeated
+`uv run python -m reliable_ingestion.producer --help` invocations, all
+succeeding. Note: `[tool.uv] link-mode = "copy"` was also added — in this
+sandboxed development shell, the default macOS clone/CoW link mode was
+observed to intermittently mark the generated editable-install `.pth` file
+hidden (`UF_HIDDEN`), which CPython's `site.py` silently skips, causing
+`ModuleNotFoundError` outside of a fresh install. Forcing `copy` mode avoided
+this consistently across repeated syncs.
 
 ## Live broker run
 
@@ -81,4 +130,21 @@ The unit test suite validates:
 - Kafka publisher with retry logic (publisher)
 - Metrics recording (metrics)
 - Fault injection (fault injection)
-- End-to-end orchestration with graceful shutdown (main)
+- End-to-end orchestration (main): event count, determinism, max-events limit,
+  duplicate injection, and exit-nonzero-on-exhausted-retries
+  (`test_run_generates_expected_event_count_for_single_cart`,
+  `test_run_is_deterministic_given_same_seed`,
+  `test_run_respects_max_events_limit`,
+  `test_run_duplicates_when_duplicate_probability_is_one`,
+  `test_run_exits_nonzero_when_publication_exhausts_retries`)
+- Graceful shutdown and flush behavior (main):
+  `test_run_flushes_producer_after_normal_completion` asserts the producer's
+  `flush()` is called after a normal run, and
+  `test_run_flushes_and_returns_metrics_on_shutdown_mid_run` simulates a
+  `_ShutdownRequested` signal firing mid-run (via a fake `sleep` that raises
+  it) and asserts `run()` returns a `GeneratorMetrics` object without
+  propagating the exception, with `flush()` still called
+- Key/event-id invariants (main):
+  `test_run_uses_consistent_key_per_cart_and_unique_event_ids` asserts all
+  events for one cart share the same Redpanda key, all `event_id`s in a run
+  are unique, and each cart's `aggregate.version` restarts at 1
