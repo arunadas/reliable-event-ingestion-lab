@@ -6,7 +6,7 @@ from typing import Any
 
 from reliable_ingestion.producer.events import EventType
 
-CURRENCY = "USD"
+CURRENCY: str = "USD"
 
 _CATALOG: list[tuple[str, int]] = [
     ("sku-100", 999),

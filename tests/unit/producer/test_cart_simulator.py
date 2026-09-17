@@ -83,7 +83,7 @@ def test_purchase_total_excludes_saved_for_later_quantity():
 
 def test_purchase_payload_uses_given_order_id():
     events = generate_cart_business_events(random.Random(5), order_id=42)
-    purchased = [e for e in events if e.event_type == "CartPurchased"][0]
+    purchased = next(e for e in events if e.event_type == "CartPurchased")
     assert purchased.payload["order_id"] == 42
 
 
