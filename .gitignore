@@ -4,6 +4,9 @@
 # Python virtual environment
 .venv/
 
+# Local AI assistant instructions
+/.claude/CLAUDE.md
+
 # Python caches and compiled files
 __pycache__/
 *.py[cod]
