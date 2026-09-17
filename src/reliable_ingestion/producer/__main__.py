@@ -24,6 +24,20 @@ class _ShutdownRequested(Exception):
     pass
 
 
+def _publish_or_exit(
+    publisher: EventPublisher, event: CartEvent, log: logging.Logger
+) -> None:
+    try:
+        publisher.publish(event)
+    except PublicationFailedError:
+        log.error(
+            "exiting after publication failure event_id=%s",
+            event.event_id,
+            extra={"event_id": event.event_id},
+        )
+        raise SystemExit(1)
+
+
 def _install_signal_handlers() -> None:
     def _handler(signum: int, frame: Any) -> None:
         raise _ShutdownRequested()
@@ -39,6 +53,10 @@ def run(
 ) -> GeneratorMetrics:
     metrics = GeneratorMetrics()
     rng = random.Random(config.seed)
+    # Fault injection draws from an independent rng stream, derived from the
+    # same seed, so that changing --delay-probability/--duplicate-probability
+    # does not shift the business-event rng stream (cart/item/price sequence).
+    fault_rng = random.Random(config.seed ^ 0x5EED)
     publisher = EventPublisher(kafka_producer, config.topic, metrics, sleep=sleep)
 
     sequence = 0
@@ -46,14 +64,12 @@ def run(
     start = time.monotonic()
 
     def _limit_reached() -> bool:
-        if config.max_events is not None and events_emitted >= config.max_events:
-            return True
-        if (
+        return (
+            config.max_events is not None and events_emitted >= config.max_events
+        ) or (
             config.run_duration_seconds is not None
             and time.monotonic() - start >= config.run_duration_seconds
-        ):
-            return True
-        return False
+        )
 
     try:
         for cart_index in range(config.num_carts):
@@ -91,22 +107,15 @@ def run(
                 )
 
                 wait_seconds = delay_seconds(
-                    rng, config.delay_probability, config.max_delay_seconds
+                    fault_rng, config.delay_probability, config.max_delay_seconds
                 )
                 if wait_seconds > 0:
                     sleep(wait_seconds)
 
-                try:
-                    publisher.publish(event)
-                except PublicationFailedError:
-                    logger.error(
-                        "exiting after publication failure",
-                        extra={"event_id": event.event_id},
-                    )
-                    raise SystemExit(1)
+                _publish_or_exit(publisher, event, logger)
 
-                if should_duplicate(rng, config.duplicate_probability):
-                    publisher.publish(event)
+                if should_duplicate(fault_rng, config.duplicate_probability):
+                    _publish_or_exit(publisher, event, logger)
 
                 events_emitted += 1
                 if config.events_per_second > 0:
@@ -116,7 +125,12 @@ def run(
     finally:
         kafka_producer.flush(10.0)
         metrics.run_duration_seconds = time.monotonic() - start
-        logger.info("run complete", extra=metrics.as_dict())
+        summary = metrics.as_dict()
+        logger.info(
+            "run complete "
+            + " ".join(f"{key}={value}" for key, value in summary.items()),
+            extra=summary,
+        )
 
     return metrics
 
