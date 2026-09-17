@@ -69,8 +69,7 @@ class EventPublisher:
             self._producer.flush(10.0)
             latency_ms = (time.monotonic() - start) * 1000
 
-            err = outcome.get("err")
-            if err is None:
+            if "err" in outcome and outcome["err"] is None:
                 msg = outcome["msg"]
                 delivery = DeliveryResult(msg.topic(), msg.partition(), msg.offset())
                 self._metrics.record_published(latency_ms)
@@ -87,6 +86,10 @@ class EventPublisher:
                 )
                 return delivery
 
+            if "err" in outcome:
+                err = outcome["err"]
+            else:
+                err = Exception("delivery callback did not fire before flush timeout")
             last_error = RuntimeError(str(err))
             if attempt < MAX_RETRIES:
                 self._metrics.record_retry()

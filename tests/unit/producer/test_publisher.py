@@ -1,13 +1,13 @@
 from datetime import UTC, datetime
 
 import pytest
+
+from reliable_ingestion.producer.events import Aggregate, CartEvent
+from reliable_ingestion.producer.metrics import GeneratorMetrics
 from reliable_ingestion.producer.publisher import (
     EventPublisher,
     PublicationFailedError,
 )
-
-from reliable_ingestion.producer.events import Aggregate, CartEvent
-from reliable_ingestion.producer.metrics import GeneratorMetrics
 
 
 class _FakeMessage:
@@ -27,7 +27,7 @@ class _FakeMessage:
 
 
 class _FakeProducer:
-    """outcomes: list of "fail" or ("ok", partition, offset), consumed FIFO."""
+    """outcomes: list of "fail", "no_callback", or ("ok", partition, offset), consumed FIFO."""
 
     def __init__(self, outcomes):
         self._outcomes = list(outcomes)
@@ -40,6 +40,9 @@ class _FakeProducer:
         outcome = self._outcomes.pop(0)
         if outcome == "fail":
             on_delivery(Exception("boom"), None)
+        elif outcome == "no_callback":
+            # Simulate flush timeout: callback never fires
+            pass
         else:
             _, partition, offset = outcome
             on_delivery(None, _FakeMessage(topic, partition, offset))
@@ -116,3 +119,19 @@ def test_publish_raises_after_max_retries_and_records_failure():
     assert metrics.publication_failures_total == 1
     assert metrics.publication_retries_total == 4
     assert len(producer.produced_values) == 5
+
+
+def test_publish_retries_on_callback_timeout_then_succeeds():
+    producer = _FakeProducer(["no_callback", ("ok", 2, 50)])
+    metrics = GeneratorMetrics()
+    publisher = EventPublisher(producer, "cart-events", metrics, sleep=lambda s: None)
+
+    result = publisher.publish(_make_event())
+
+    assert result.topic == "cart-events"
+    assert result.partition == 2
+    assert result.offset == 50
+    assert metrics.events_published_total == 1
+    assert metrics.publication_retries_total == 1
+    assert len(producer.produced_values) == 2
+    assert len(set(producer.produced_values)) == 1  # identical bytes every attempt
