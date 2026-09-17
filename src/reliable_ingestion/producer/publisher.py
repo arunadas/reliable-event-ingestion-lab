@@ -74,7 +74,14 @@ class EventPublisher:
                 delivery = DeliveryResult(msg.topic(), msg.partition(), msg.offset())
                 self._metrics.record_published(latency_ms)
                 logger.info(
-                    "published event",
+                    "published event event_id=%s cart_id=%s aggregate_version=%s "
+                    "topic=%s partition=%s offset=%s",
+                    event.event_id,
+                    event.aggregate.id,
+                    event.aggregate.version,
+                    delivery.topic,
+                    delivery.partition,
+                    delivery.offset,
                     extra={
                         "event_id": event.event_id,
                         "cart_id": event.aggregate.id,
@@ -98,7 +105,9 @@ class EventPublisher:
 
         self._metrics.record_failure()
         logger.error(
-            "publication failed after retries",
+            "publication failed after retries event_id=%s cart_id=%s",
+            event.event_id,
+            event.aggregate.id,
             extra={"event_id": event.event_id, "cart_id": event.aggregate.id},
         )
         raise PublicationFailedError(
