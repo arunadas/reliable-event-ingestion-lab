@@ -1,11 +1,13 @@
 import json
 import random
+from collections import defaultdict
 
 import pytest
 
-from reliable_ingestion.producer.__main__ import run
+from reliable_ingestion.producer.__main__ import _ShutdownRequested, run
 from reliable_ingestion.producer.cart_simulator import generate_cart_business_events
 from reliable_ingestion.producer.config import GeneratorConfig
+from reliable_ingestion.producer.metrics import GeneratorMetrics
 
 
 def _business_fingerprint(raw_json_bytes):
@@ -37,10 +39,13 @@ class _FakeMessage:
 class _AlwaysSucceedsProducer:
     def __init__(self):
         self.produced_values = []
+        self.produced_keys = []
+        self.flush_calls = 0
         self._offset = 0
 
     def produce(self, topic, key, value, on_delivery):
         self.produced_values.append(value)
+        self.produced_keys.append(key)
         on_delivery(None, _FakeMessage(topic, 0, self._offset))
         self._offset += 1
 
@@ -48,6 +53,7 @@ class _AlwaysSucceedsProducer:
         return 0
 
     def flush(self, timeout=None):
+        self.flush_calls += 1
         return 0
 
 
@@ -63,19 +69,19 @@ class _AlwaysFailsProducer:
 
 
 def _base_config(**overrides):
-    defaults = dict(
-        broker_address="localhost:19092",
-        topic="cart-events",
-        events_per_second=0.0,
-        num_carts=1,
-        max_events=None,
-        run_duration_seconds=None,
-        seed=3,
-        producer_instance_id="generator-test",
-        duplicate_probability=0.0,
-        delay_probability=0.0,
-        max_delay_seconds=0.0,
-    )
+    defaults = {
+        "broker_address": "localhost:19092",
+        "topic": "cart-events",
+        "events_per_second": 0.0,
+        "num_carts": 1,
+        "max_events": None,
+        "run_duration_seconds": None,
+        "seed": 3,
+        "producer_instance_id": "generator-test",
+        "duplicate_probability": 0.0,
+        "delay_probability": 0.0,
+        "max_delay_seconds": 0.0,
+    }
     defaults.update(overrides)
     return GeneratorConfig(**defaults)
 
@@ -135,3 +141,60 @@ def test_run_exits_nonzero_when_publication_exhausts_retries():
         run(_base_config(), producer, sleep=lambda s: None)
 
     assert exc_info.value.code == 1
+
+
+def test_run_flushes_producer_after_normal_completion():
+    producer = _AlwaysSucceedsProducer()
+
+    run(_base_config(), producer, sleep=lambda s: None)
+
+    assert producer.flush_calls >= 1
+
+
+def test_run_flushes_and_returns_metrics_on_shutdown_mid_run():
+    producer = _AlwaysSucceedsProducer()
+    sleep_calls = {"count": 0}
+
+    def _sleep_then_shutdown(_seconds):
+        sleep_calls["count"] += 1
+        if sleep_calls["count"] >= 2:
+            raise _ShutdownRequested()
+
+    metrics = run(
+        _base_config(num_carts=5, events_per_second=1000.0),
+        producer,
+        sleep=_sleep_then_shutdown,
+    )
+
+    assert isinstance(metrics, GeneratorMetrics)
+    assert metrics.events_generated_total >= 1
+    assert producer.flush_calls >= 1
+
+
+def test_run_uses_consistent_key_per_cart_and_unique_event_ids():
+    producer = _AlwaysSucceedsProducer()
+
+    run(_base_config(num_carts=3, seed=5), producer, sleep=lambda s: None)
+
+    decoded = [json.loads(v) for v in producer.produced_values]
+
+    # All events for one cart use the identical Redpanda key.
+    keys_by_cart = defaultdict(set)
+    for key, event in zip(producer.produced_keys, decoded):
+        keys_by_cart[event["aggregate"]["id"]].add(key)
+    for cart_id, keys in keys_by_cart.items():
+        assert len(keys) == 1, f"cart {cart_id} used multiple keys: {keys}"
+        assert keys == {cart_id.encode("utf-8")}
+
+    # Event IDs are unique across the whole run.
+    event_ids = [event["event_id"] for event in decoded]
+    assert len(event_ids) == len(set(event_ids))
+
+    # Per-cart aggregate versions restart at 1 for each new cart.
+    versions_by_cart = defaultdict(list)
+    for event in decoded:
+        versions_by_cart[event["aggregate"]["id"]].append(event["aggregate"]["version"])
+    for cart_id, versions in versions_by_cart.items():
+        assert versions[0] == 1, (
+            f"cart {cart_id} did not start at version 1: {versions}"
+        )
