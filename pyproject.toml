@@ -29,6 +29,12 @@ packages = ["src/reliable_ingestion"]
 # Force plain-copy installs instead of the macOS default of clone/CoW.
 # In some sandboxed shells the clone path was observed to intermittently
 # propagate a hidden (UF_HIDDEN) file flag onto the generated editable-install
-# .pth file; CPython's site.py silently skips hidden .pth files, which broke
-# `uv run python -m reliable_ingestion.producer ...` outside of pytest.
+# .pth file; CPython's site.py silently skips hidden .pth files, which breaks
+# module imports outside of pytest (which sets pythonpath itself).
+#
+# This setting alone does NOT reliably prevent the issue (verified 2026-09-17:
+# the hidden flag still occurred with this setting in place). Run the module
+# directly with `uv run --no-editable --locked python -m ...` instead, which
+# installs a real (non-editable) wheel and sidesteps the editable .pth file
+# entirely. See results/producer_smoke_test.md for the verified commands.
 link-mode = "copy"
