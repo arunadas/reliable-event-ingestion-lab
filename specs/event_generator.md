@@ -1,16 +1,16 @@
 # Event Generator Specification
 
 ## Purpose
-event genrator is a python application which simulates online retail purchase and creates cart events 
+event genrator is a python application which simulates online retail purchase and creates cart events
 
 ## Scope
 Phase 1 - generate generates one cart lifecycle containing 3-4 events.
 
 ## Event Lifecycle
 -CartCreated
--CartItemAdded 
--CartItemSavedForLater 
--CartPurchased 
+-CartItemAdded
+-CartItemSavedForLater
+-CartPurchased
 
 ### Event sequence rules
 CartCreated
@@ -119,7 +119,7 @@ CartPurchased
      "currency" : "USD",
     "item_count" : 4
   }
- 
+
 }
 
 
@@ -137,7 +137,7 @@ CartItemSavedForLater:
 to saved-for-later. The quantity cannot exceed the active quantity.
 
 CartPurchased:
-  order_id, total_amount_minor, currency, item_count  
+  order_id, total_amount_minor, currency, item_count
 
 `total_amount_minor` equals the sum of active item quantities multiplied
 by their unit prices. Saved-for-later items are excluded.
@@ -176,7 +176,7 @@ by their unit prices. Saved-for-later items are excluded.
 
 ## Retry and Failure Behavior
 If publication fails, retry the same serialized event with the same
-`event_id`, cart version, and producer sequence. 
+`event_id`, cart version, and producer sequence.
 A retry must not create a new logical event.
 Retry transient publication failures using bounded exponential backoff.
 Retry at most 5 times. If exhausted, log the failure and exit non-zero.
@@ -221,7 +221,7 @@ aggregate.version starts at 1 and increments by 1 for every cart event
 - Given the same random seed and configuration, the generator produces
   the same business-event sequence, excluding wall-clock timestamps.
 - A fixed random seed reproduces the same carts, products, quantities,
-prices, and event ordering. Timestamps and generated identifiers may differ.  
+prices, and event ordering. Timestamps and generated identifiers may differ.
 - Every event conforms to the event schema.
 - All events for one cart use the same Redpanda key.
 - Cart versions begin at 1 and increase without gaps.
@@ -237,9 +237,3 @@ prices, and event ordering. Timestamps and generated identifiers may differ.
 - Watermark and late-event simulation in Phase 1
 Invalid-event probability
 restartable generation, add a proper checkpoint file or database
-
-
-
-
-
-
