@@ -1,6 +1,10 @@
 # macOS
 .DS_Store
 
+# Local agent planning and worktree artifacts
+/docs/superpowers/
+/.claude/worktrees/
+
 # Python virtual environment
 .venv/
 
