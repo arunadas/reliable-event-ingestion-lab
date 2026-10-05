@@ -1,5 +1,125 @@
 # Producer Smoke Test — 2026-09-17
 
+### Live Redpanda integration verification — 2026-10-04
+
+The first integration attempt exposed a stale-package problem. Although the
+current source contained the new mutation events, `uv run --no-editable
+--locked` reused the previously installed `0.1.0` wheel. Redpanda therefore
+received 450 events from the old four-event implementation. This was detected
+because none of the three new event types appeared.
+
+The project was explicitly rebuilt with:
+
+```bash
+uv sync --no-editable --locked \
+  --reinstall-package reliable-event-ingestion-lab
+```
+
+The rebuilt package was run with:
+
+```bash
+uv run --no-sync python -m reliable_ingestion.producer \
+  --topic cart-events-producer-it-20261004-v2 \
+  --num-carts 100 \
+  --seed 0 \
+  --events-per-second 0
+```
+
+Results:
+
+- 554 events generated and 554 published
+- 0 publication retries and 0 publication failures
+- 100 carts validated
+- 554 unique event IDs and producer sequences
+- Partition high watermarks: 195, 176, and 183; total 554
+- Every cart remained on one partition
+- Message keys matched cart IDs
+- Aggregate versions were consecutive for every cart
+- Every lifecycle began with `CartCreated`, contained an initial
+  `CartItemAdded`, and ended with `CartPurchased`
+- Every purchase contained at least one active item
+- All seven event types reached Redpanda
+
+Observed event counts:
+
+- `CartCreated`: 100
+- `CartItemAdded`: 222
+- `CartItemRemoved`: 53
+- `CartItemSavedForLater`: 56
+- `SavedForLaterItemRemoved`: 9
+- `SavedForLaterItemMovedToCart`: 14
+- `CartPurchased`: 100
+
+## Update (new mutation events — 2026-10-04)
+
+`specs/event_generator.md` was updated to add three new event types
+(`CartItemRemoved`, `SavedForLaterItemRemoved`, `SavedForLaterItemMovedToCart`)
+and to replace the old fixed-range generation algorithm (1-3 initial adds,
+then 0-2 saves) with: exactly one initial `CartItemAdded`, then a mutation
+count drawn uniformly from 0-5, where each mutation is chosen uniformly from
+whichever action types are currently valid for the cart's state.
+`generate_cart_business_events` in `cart_simulator.py` was rewritten
+accordingly, and `EventType` in `events.py` now includes the three new
+literals. No changes were needed in `__main__.py`, `config.py`, or
+`publisher.py` — they all handle `BusinessEvent`/`CartEvent` generically by
+`event_type` string.
+
+**Unit tests:** `uv run pytest tests/unit -v` — 44 passed (was 41; net +1
+after adding 3 new tests to `test_cart_simulator.py` and removing 2 older
+tests whose weaker invariant-tracking was superseded by a single
+comprehensive replay test):
+- `test_second_event_is_the_single_initial_item_added`
+- `test_mutation_count_is_between_zero_and_five`
+- `test_full_state_invariants_hold_across_all_mutation_types` (replaces
+  `test_saved_for_later_never_exceeds_previously_active_quantity` and
+  `test_purchase_total_excludes_saved_for_later_quantity`, which only
+  tracked `CartItemAdded`/`CartItemSavedForLater` and would have silently
+  under-constrained the new removal/move event types)
+
+`ruff check` and `mypy` are clean on the changed files.
+
+**Previously documented "zero-item purchase" behavior is now prevented by
+design, not just by chance.** The 2026-09-17 note below ("some carts
+purchase zero items", ~21% of seeds) was a real gap in the old algorithm:
+`CartItemSavedForLater` could move an item's *entire* active quantity to
+saved-for-later. The new spec's "a mutation is valid only if it leaves at
+least one active item" invariant is now enforced directly in
+`_CartState.valid_actions()`/`take_active()` — `CartItemRemoved` and
+`CartItemSavedForLater` are excluded from the valid-action set whenever
+`active_total() < 2`, and `take_active()` caps the quantity drawn so the
+last unit of the only remaining active product can never be fully removed
+or saved. A 2,000-seed check against the current `src/` module found
+**0/2,000 zero-item purchases**. All five mutation actions occurred during
+the check. Their frequencies varied because action availability depends on
+the current cart state; no action type was systematically starved.
+
+**Packaging pitfall confirmed during live testing:** a normal Python invocation
+loaded a stale non-editable installation from `.venv/site-packages` instead of
+the edited `src/` tree. Pytest was unaffected because `pyproject.toml` sets
+`pythonpath = ["src"]`. For a packaged live run after source changes, explicitly
+rebuild the project with `uv sync --no-editable --locked --reinstall-package
+reliable-event-ingestion-lab`, then execute it with `uv run --no-sync`.
+
+### Follow-up: targeted coverage for the new event types (2026-10-04)
+
+Two gaps in the tests above were closed in `test_cart_simulator.py`:
+
+- `test_every_new_mutation_type_is_generated_across_seed_range` asserts
+  that `CartItemRemoved`, `SavedForLaterItemRemoved`, and
+  `SavedForLaterItemMovedToCart` each appear at least once across seeds
+  0-299. Without it, the replay invariant test would still pass if one of
+  these types became unreachable, because it only checks events that occur.
+- `test_moved_back_item_keeps_price_and_currency_in_purchase_total` pins
+  seed 67 and asserts its full event sequence: 1 x `sku-100` (999) and
+  2 x `sku-400` (799) added, both `sku-400` units saved for later, one moved
+  back, then `CartPurchased` with `total_amount_minor` 1798 (999 + 799),
+  `item_count` 2, currency `USD`. The moved-back unit is priced at its
+  original unit price and the unit still saved is excluded from the total.
+
+Checks re-run after adding them: `uv run pytest` — 44 passed (was 42);
+`uv run ruff check .` — all checks passed; `uv run mypy src` — no issues in
+9 source files.
+
 ## Update (final fix wave)
 
 This file was updated after the final whole-branch code review fix wave. Changes
@@ -125,10 +245,13 @@ This succeeded and is now the documented way to run the producer (see "Live
 broker run" below). `--locked` ensures the run uses `uv.lock` exactly rather
 than re-resolving. The `[tool.uv] link-mode = "copy"` setting is left in
 place (harmless, and may still help in some environments) but should not be
-relied on by itself — always use `--no-editable --locked` to run the module
-directly.
+relied on by itself — after local source changes, explicitly rebuild with `uv sync --no-editable
+--locked --reinstall-package reliable-event-ingestion-lab`, then run with
+`uv run --no-sync`.
 
-## Known behavior: some carts purchase zero items
+## Historical behavior: zero-item purchases before the 2026-10-04 rewrite
+This behavior is superseded by the 2026-10-04 mutation rewrite. The
+current generator requires every purchase to contain at least one active item.
 
 `CartItemSavedForLater` can move an item's entire active quantity to
 saved-for-later before purchase. When that happens for every item in a

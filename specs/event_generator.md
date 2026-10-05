@@ -1,24 +1,35 @@
 # Event Generator Specification
 
 ## Purpose
-event genrator is a python application which simulates online retail purchase and creates cart events
+The event generator is a Python application that simulates online retail
+shopping sessions and produces cart events.
 
 ## Scope
-Phase 1 - generate generates one cart lifecycle containing 3-4 events.
+Each simulated cart lifecycle begins with CartCreated, contains one or
+more CartItemAdded events and zero or more valid cart mutation events,
+and ends with exactly one CartPurchased event.
 
 ## Event Lifecycle
--CartCreated
--CartItemAdded
--CartItemSavedForLater
--CartPurchased
+- CartCreated
+- CartItemAdded
+- CartItemRemoved
+- CartItemSavedForLater
+- SavedForLaterItemRemoved
+- SavedForLaterItemMovedToCart
+- CartPurchased
 
 ### Event sequence rules
 CartCreated
-   ↓
-CartItemAdded (one or more)
-   ↓
-CartItemSavedForLater (optional, zero or more)
-   ↓
+    ↓
+CartItemAdded (at least one)
+    ↓
+Zero or more valid cart actions:
+    - CartItemAdded
+    - CartItemRemoved
+    - CartItemSavedForLater
+    - SavedForLaterItemRemoved
+    - SavedForLaterItemMovedToCart
+    ↓
 CartPurchased
 
 
@@ -27,7 +38,7 @@ CartPurchased
 ## Event Envelope
 
 {
-  "event_id": "01K...",
+  "event_id": "01K...001",
   "event_type": "CartCreated",
   "schema_version": 1,
   "occurred_at": "2026-09-14T19:10:12.123Z",
@@ -38,15 +49,15 @@ CartPurchased
   "aggregate": {
     "type": "cart",
     "id": "cart-456",
-    "version": 16
+    "version": 1
   },
   "customer_id": "customer-123",
   "correlation_id": "session-789",
-  "causation_id": "command-345"
+  "causation_id": "command-001"
 }
 
 {
-  "event_id": "01K...",
+  "event_id": "01K...002",
   "event_type": "CartItemAdded",
   "schema_version": 1,
   "occurred_at": "2026-09-14T19:10:14.123Z",
@@ -57,81 +68,159 @@ CartPurchased
   "aggregate": {
     "type": "cart",
     "id": "cart-456",
-    "version": 17
+    "version": 2
   },
   "customer_id": "customer-123",
   "correlation_id": "session-789",
-  "causation_id": "command-345",
+  "causation_id": "command-002",
   "payload": {
     "product_id": "sku-123",
-    "quantity_delta": 1,
+    "quantity_delta": 4,
     "unit_price_minor": 1599,
     "currency": "USD"
   }
 }
 
 {
-  "event_id": "01K...",
-  "event_type": "CartItemSavedForLater",
+  "event_id": "01K...003",
+  "event_type": "CartItemRemoved",
   "schema_version": 1,
-  "occurred_at": "2026-09-14T19:10:20.123Z",
-  "produced_at": "2026-09-14T19:10:20.195Z",
+  "occurred_at": "2026-09-14T19:10:14.123Z",
+  "produced_at": "2026-09-14T19:10:14.185Z",
   "producer": "cart-simulator",
   "producer_instance_id": "generator-2",
   "producer_sequence": 4813,
   "aggregate": {
     "type": "cart",
     "id": "cart-456",
-    "version": 18
+    "version": 3
   },
   "customer_id": "customer-123",
   "correlation_id": "session-789",
-  "causation_id": "command-345",
+  "causation_id": "command-003",
   "payload": {
     "product_id": "sku-123",
-    "quantity_delta": 1,
-    "unit_price_minor": 1599,
-    "currency": "USD"
+    "quantity": 1
   }
 }
 
 {
-  "event_id": "01K...",
-  "event_type": "CartPurchased",
+  "event_id": "01K...004",
+  "event_type": "CartItemSavedForLater",
   "schema_version": 1,
-  "occurred_at": "2026-09-14T19:10:26.123Z",
-  "produced_at": "2026-09-14T19:10:26.195Z",
+  "occurred_at": "2026-09-14T19:10:20.123Z",
+  "produced_at": "2026-09-14T19:10:20.195Z",
   "producer": "cart-simulator",
   "producer_instance_id": "generator-2",
   "producer_sequence": 4814,
   "aggregate": {
     "type": "cart",
     "id": "cart-456",
-    "version": 19
+    "version": 4
   },
   "customer_id": "customer-123",
   "correlation_id": "session-789",
-  "causation_id": "command-345",
+  "causation_id": "command-004",
   "payload": {
-    "product_id": "sku-456",
+    "product_id": "sku-123",
+    "quantity": 2
+  }
+}
+
+{
+  "event_id": "01K...005",
+  "event_type": "SavedForLaterItemRemoved",
+  "schema_version": 1,
+  "occurred_at": "2026-09-14T19:10:20.123Z",
+  "produced_at": "2026-09-14T19:10:20.195Z",
+  "producer": "cart-simulator",
+  "producer_instance_id": "generator-2",
+  "producer_sequence": 4815,
+  "aggregate": {
+    "type": "cart",
+    "id": "cart-456",
+    "version": 5
+  },
+  "customer_id": "customer-123",
+  "correlation_id": "session-789",
+  "causation_id": "command-005",
+  "payload": {
+    "product_id": "sku-123",
+    "quantity":1
+  }
+}
+
+{
+  "event_id": "01K...006",
+  "event_type": "SavedForLaterItemMovedToCart",
+  "schema_version": 1,
+  "occurred_at": "2026-09-14T19:10:20.123Z",
+  "produced_at": "2026-09-14T19:10:20.195Z",
+  "producer": "cart-simulator",
+  "producer_instance_id": "generator-2",
+  "producer_sequence": 4816,
+  "aggregate": {
+    "type": "cart",
+    "id": "cart-456",
+    "version": 6
+  },
+  "customer_id": "customer-123",
+  "correlation_id": "session-789",
+  "causation_id": "command-006",
+  "payload": {
+    "product_id": "sku-123",
+    "quantity": 1
+  }
+}
+
+{
+  "event_id": "01K...007",
+  "event_type": "CartPurchased",
+  "schema_version": 1,
+  "occurred_at": "2026-09-14T19:10:26.123Z",
+  "produced_at": "2026-09-14T19:10:26.195Z",
+  "producer": "cart-simulator",
+  "producer_instance_id": "generator-2",
+  "producer_sequence": 4817,
+  "aggregate": {
+    "type": "cart",
+    "id": "cart-456",
+    "version": 7
+  },
+  "customer_id": "customer-123",
+  "correlation_id": "session-789",
+  "causation_id": "command-007",
+  "payload": {
      "order_id": 12,
-    "total_amount_minor": 2345,
+    "total_amount_minor": 3198,
      "currency" : "USD",
-    "item_count" : 4
+    "item_count" : 2
   }
 
 }
 
 
-## Event-Type Payloads
-CartCreated:
-  customer_id
+## State Transition Semantics
 
-CartItemAdded:
-  product_id, quantity_delta, unit_price_minor, currency
+CartItemRemoved                 → subtract from active
+CartItemSavedForLater           → active to saved
+SavedForLaterItemRemoved        → subtract from saved
+SavedForLaterItemMovedToCart    → saved to active
 
-CartItemSavedForLater:
-  product_id, quantity
+CartItemRemoved removes the specified positive quantity from the active
+cart. The product must exist in the active cart, and quantity must not
+exceed its active quantity. It does not affect saved-for-later quantity.
+
+SavedForLaterItemRemoved permanently removes the specified positive
+quantity from saved-for-later. The product must exist in saved-for-later,
+and quantity must not exceed its saved quantity. It does not affect the
+active cart.
+
+SavedForLaterItemMovedToCart moves the specified positive quantity from
+saved-for-later to the active cart. The product must exist in
+saved-for-later, and quantity must not exceed its saved quantity. The
+saved quantity decreases and the active quantity increases by the same
+amount. The product retains its original unit price and currency.
 
 `CartItemSavedForLater` moves the specified quantity from the active cart
 to saved-for-later. The quantity cannot exceed the active quantity.
@@ -141,6 +230,38 @@ CartPurchased:
 
 `total_amount_minor` equals the sum of active item quantities multiplied
 by their unit prices. Saved-for-later items are excluded.
+
+## Payload Contract
+CartCreated
+  no payload
+
+CartItemAdded
+  product_id: string
+  quantity_delta: positive integer
+  unit_price_minor: non-negative integer
+  currency: string
+
+CartItemRemoved
+  product_id: string
+  quantity: positive integer
+
+CartItemSavedForLater
+  product_id: string
+  quantity: positive integer
+
+SavedForLaterItemRemoved
+  product_id: string
+  quantity: positive integer
+
+SavedForLaterItemMovedToCart
+  product_id: string
+  quantity: positive integer
+
+CartPurchased
+  order_id: non-negative integer
+  total_amount_minor: non-negative integer
+  currency: string
+  item_count: non-negative integer
 
 
 ## Field Semantics
@@ -198,16 +319,48 @@ publish_latency_ms
 run_duration_seconds
 
 ## Business Invariants
-Items cannot be added before CartCreated
-A purchase cart can not receive additional events.
-An item must exist before being saved for later.
-aggregate.version starts at 1 and increments by 1 for every cart event
+- Items cannot be added before CartCreated
+- A purchased cart cannot receive additional events.
+- An item must exist before being saved for later.
+- aggregate.version starts at 1 and increments by 1 for every cart event
+- All mutation quantities must be positive integers.
+- An active item can be removed only if it exists in the active cart.
+- Removed quantity cannot exceed active quantity.
+- An item can be saved for later only if it exists in the active cart.
+- Saved quantity cannot exceed active quantity.
+- A saved item can be removed only if it exists in saved-for-later.
+- Removed saved quantity cannot exceed saved quantity.
+- An item can be moved back to the cart only if it exists in saved-for-later.
+- Moved quantity cannot exceed saved quantity.
+- Moving a saved item back decreases saved quantity and increases active
+  quantity by exactly the same amount.
+- When a product's quantity reaches zero, remove that product from the
+  corresponding active or saved-for-later collection. Zero-quantity
+  entries must not be retained.
+- Product price and currency remain unchanged when moving between active
+  and saved-for-later.
+- No mutation event can occur after CartPurchased.
+- Generate exactly one initial CartItemAdded event.
+- Choose a mutation count uniformly from 0 through 5, inclusive.
+- For each mutation, construct the set of action types that are valid for
+  the current state and choose one uniformly from that set.
+- CartItemAdded is always a valid mutation.
+- Removal, save, and move actions are valid only when their preconditions
+  are satisfied and the action leaves at least one active cart item.
+- Before CartPurchased, the simulator must ensure that at least one active
+  item remains. A mutation that would reduce the total active quantity to
+  zero must either be skipped or limited so that one active unit remains.
+- CartPurchased requires at least one active item.
+- A mutation is valid only if it leaves at least one active item in the cart.
+
 
 
 ## Antipatterns
 
 - Do not generate a new `event_id` during a publication retry.
 - Do not use floating-point values for money.
+- Do not remove an active cart item unless it has been added and remains active.
+- Do not remove a saved-for-later item unless it exists in saved-for-later.
 - Do not publish cart events without a `cart_id` key.
 - Do not reuse an event ID for modified content.
 - Do not decrease or reuse a cart aggregate version.
@@ -229,6 +382,24 @@ prices, and event ordering. Timestamps and generated identifiers may differ.
 - Publication retries retain the original event ID and payload.
 - Graceful shutdown flushes outstanding producer records.
 - Unit tests cover every event type and state transition.
+- Active-item removal never exceeds active quantity.
+- Saved-item removal never exceeds saved quantity.
+- Moving a saved item back to the cart decreases saved quantity and
+  increases active quantity by the same amount.
+- Moving an item back preserves its unit price and currency.
+- Purchase item_count equals the sum of remaining active quantities.
+- Purchase total_amount_minor equals the sum of active quantity multiplied
+  by unit price after all removals, saves, and moves.
+- Saved-for-later quantities remain excluded from purchase totals.
+- No zero or negative mutation quantity is generated.
+- Aggregate versions remain sequential across all new event types.
+- Given the same seed, all new action choices and quantities are deterministic.
+- The generator selects only actions that are valid for the current active
+  and saved-for-later state; it never emits an invalid transition and then
+  attempts to repair it afterward.
+- Products whose active or saved quantity reaches zero are absent from the
+  corresponding state collection.
+- Every generated cart reaches CartPurchased with at least one active item.
 
 ## Non-Goals
 - Order lifecycle events after `CartPurchased`

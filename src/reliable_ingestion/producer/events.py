@@ -10,7 +10,10 @@ SCHEMA_VERSION = 1
 EventType = Literal[
     "CartCreated",
     "CartItemAdded",
+    "CartItemRemoved",
     "CartItemSavedForLater",
+    "SavedForLaterItemRemoved",
+    "SavedForLaterItemMovedToCart",
     "CartPurchased",
 ]
 
