@@ -62,17 +62,24 @@ def repo(tmp_path: Path) -> Path:
 
 
 def run_verifier(
-    repo: Path, mode: str | None = None
+    repo: Path,
+    mode: str | None = None,
+    *,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = ["bash", str(VERIFIER)]
     if mode is not None:
         command.append(mode)
 
+    effective_env = os.environ.copy()
+    if env is not None:
+        effective_env.update(env)
+
     return run_command(
         *command,
         cwd=repo,
         check=False,
-        env=os.environ.copy(),
+        env=effective_env,
     )
 
 
@@ -93,6 +100,44 @@ def stage_file(
     command.append(relative_path)
 
     run_command(*command, cwd=repo)
+
+
+def write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def fake_tool_environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    bin_directory = tmp_path / "bin"
+    bin_directory.mkdir()
+
+    log_path = tmp_path / "commands.log"
+
+    write_executable(
+        bin_directory / "gitleaks",
+        """#!/usr/bin/env bash
+printf 'gitleaks %s\\n' "$*" >> "$VERIFY_TEST_LOG"
+cat > /dev/null
+exit "${FAKE_GITLEAKS_EXIT:-0}"
+""",
+    )
+
+    write_executable(
+        bin_directory / "uv",
+        """#!/usr/bin/env bash
+printf 'uv %s\\n' "$*" >> "$VERIFY_TEST_LOG"
+if [[ "$*" == *"ruff check src tests"* ]]; then
+  exit "${FAKE_RUFF_EXIT:-0}"
+fi
+exit 0
+""",
+    )
+
+    environment = {
+        "PATH": f"{bin_directory}:/usr/bin:/bin",
+        "VERIFY_TEST_LOG": str(log_path),
+    }
+    return environment, log_path
 
 
 def test_rejects_missing_mode(repo: Path) -> None:
@@ -140,3 +185,82 @@ def test_handles_staged_filename_with_spaces(repo: Path) -> None:
 
     assert path in result.stdout
     assert f"Unsafe staged path: {path}" not in result.stderr
+
+
+def test_fast_verification_runs_checks_in_order(repo: Path, tmp_path: Path) -> None:
+    stage_file(repo, "docs/safe-change.md")
+
+    env, log_path = fake_tool_environment(tmp_path)
+
+    result = run_verifier(repo, "fast", env=env)
+
+    assert result.returncode == 0
+    assert log_path.read_text(encoding="utf-8").splitlines() == [
+        "gitleaks stdin",
+        "uv run --no-editable --locked ruff check src tests",
+        "uv run --no-editable --locked ruff format --check src tests",
+        "uv run --no-editable --locked mypy src",
+        "uv run --no-editable --locked pytest tests/unit",
+    ]
+    assert "Fast verification passed" in result.stdout
+
+
+def test_reports_missing_gitleaks(repo: Path) -> None:
+    stage_file(repo, "docs/safe-change.md")
+
+    result = run_verifier(
+        repo,
+        "fast",
+        env={"PATH": "/usr/bin:/bin"},
+    )
+
+    assert result.returncode != 0
+    assert "Missing required command: gitleaks" in result.stderr
+
+
+def test_fast_verification_preserves_first_failure(
+    repo: Path,
+    tmp_path: Path,
+) -> None:
+    stage_file(repo, "docs/safe-change.md")
+    env, log_path = fake_tool_environment(tmp_path)
+    env["FAKE_RUFF_EXIT"] = "37"
+
+    result = run_verifier(repo, "fast", env=env)
+
+    assert result.returncode == 37
+    assert log_path.read_text(encoding="utf-8").splitlines() == [
+        "gitleaks stdin",
+        "uv run --no-editable --locked ruff check src tests",
+    ]
+
+
+def test_fast_verification_does_not_change_staged_content(
+    repo: Path,
+    tmp_path: Path,
+) -> None:
+    path = "docs/name with spaces.md"
+    stage_file(repo, path)
+    env, _ = fake_tool_environment(tmp_path)
+
+    before = run_command(
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        cwd=repo,
+    ).stdout
+
+    result = run_verifier(repo, "fast", env=env)
+
+    after = run_command(
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        cwd=repo,
+    ).stdout
+
+    assert result.returncode == 0
+    assert "Fast verification passed" in result.stdout
+    assert after == before
