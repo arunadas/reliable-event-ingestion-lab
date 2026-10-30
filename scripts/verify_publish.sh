@@ -26,6 +26,24 @@ run_check() {
   "$@"
 }
 
+require_running_service() {
+  service_name="$1"
+  running_services="$2"
+
+  case $'\n'"$running_services"$'\n' in
+    *$'\n'"$service_name"$'\n'*)
+      ;;
+    *)
+      printf 'ERROR: Required Compose service is not running: %s\n' \
+        "$service_name" >&2
+      printf 'Start the local infrastructure with:\n' >&2
+      printf '  colima start\n' >&2
+      printf '  docker compose up -d\n' >&2
+      exit 1
+      ;;
+  esac
+}
+
 mode="${1:-}"
 
 case "$mode" in
@@ -99,7 +117,41 @@ run_check \
   "Unit tests" \
   uv run --no-editable --locked pytest tests/unit
 
-printf '\nFast verification passed.\n'
+if [[ "$mode" == "full" ]]; then
+  require_command docker
+
+  run_check \
+    "Docker Compose configuration" \
+    docker compose config --quiet
+
+  printf '\n==> Running Compose services\n'
+  running_services="$(docker compose ps --status running --services)"
+  require_running_service "postgres" "$running_services"
+  require_running_service "redpanda" "$running_services"
+
+  run_check \
+    "PostgreSQL readiness" \
+    docker compose exec -T postgres sh -c \
+    'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+  run_check \
+    "Redpanda cluster health" \
+    docker compose exec -T redpanda \
+    rpk cluster health --exit-when-healthy
+
+  run_check \
+    "Integration tests" \
+    uv run --no-editable --locked pytest tests/integration -m integration
+
+  run_check \
+    "Git history secret scan" \
+    gitleaks git .
+
+  printf '\nFull verification passed.\n'
+else
+  printf '\nFast verification passed.\n'
+fi
+
 printf 'Verified staged files:\n'
 
 while IFS= read -r -d '' path; do

@@ -117,7 +117,9 @@ def fake_tool_environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
         bin_directory / "gitleaks",
         """#!/usr/bin/env bash
 printf 'gitleaks %s\\n' "$*" >> "$VERIFY_TEST_LOG"
-cat > /dev/null
+if [[ "${1:-}" == "stdin" ]]; then
+  cat > /dev/null
+fi
 exit "${FAKE_GITLEAKS_EXIT:-0}"
 """,
     )
@@ -130,6 +132,17 @@ if [[ "$*" == *"ruff check src tests"* ]]; then
   exit "${FAKE_RUFF_EXIT:-0}"
 fi
 exit 0
+""",
+    )
+
+    write_executable(
+        bin_directory / "docker",
+        """#!/usr/bin/env bash
+printf 'docker %s\\n' "$*" >> "$VERIFY_TEST_LOG"
+if [[ "$*" == "compose ps --status running --services" ]]; then
+  printf '%b' "${FAKE_RUNNING_SERVICES:-postgres\\nredpanda\\n}"
+fi
+exit "${FAKE_DOCKER_EXIT:-0}"
 """,
     )
 
@@ -264,3 +277,80 @@ def test_fast_verification_does_not_change_staged_content(
     assert result.returncode == 0
     assert "Fast verification passed" in result.stdout
     assert after == before
+
+
+def test_full_verification_runs_infrastructure_checks_in_order(
+    repo: Path,
+    tmp_path: Path,
+) -> None:
+    stage_file(repo, "docs/safe-change.md")
+    env, log_path = fake_tool_environment(tmp_path)
+
+    result = run_verifier(repo, "full", env=env)
+
+    commands = log_path.read_text(encoding="utf-8").splitlines()
+
+    assert result.returncode == 0
+    assert commands[:5] == [
+        "gitleaks stdin",
+        "uv run --no-editable --locked ruff check src tests",
+        "uv run --no-editable --locked ruff format --check src tests",
+        "uv run --no-editable --locked mypy src",
+        "uv run --no-editable --locked pytest tests/unit",
+    ]
+    assert commands[5:7] == [
+        "docker compose config --quiet",
+        "docker compose ps --status running --services",
+    ]
+    assert commands[7].startswith("docker compose exec -T postgres sh -c pg_isready")
+    assert commands[8] == (
+        "docker compose exec -T redpanda rpk cluster health --exit-when-healthy"
+    )
+    assert commands[9:] == [
+        "uv run --no-editable --locked pytest tests/integration -m integration",
+        "gitleaks git .",
+    ]
+    assert "Full verification passed" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("running_services", "missing_service"),
+    [
+        ("redpanda\n", "postgres"),
+        ("postgres\n", "redpanda"),
+    ],
+)
+def test_full_verification_rejects_missing_service(
+    repo: Path,
+    tmp_path: Path,
+    running_services: str,
+    missing_service: str,
+) -> None:
+    stage_file(repo, "docs/safe-change.md")
+    env, _ = fake_tool_environment(tmp_path)
+    env["FAKE_RUNNING_SERVICES"] = running_services
+
+    result = run_verifier(repo, "full", env=env)
+
+    assert result.returncode != 0
+    assert (
+        f"Required Compose service is not running: {missing_service}" in result.stderr
+    )
+    assert "colima start" in result.stderr
+    assert "docker compose up -d" in result.stderr
+
+
+def test_full_verification_reports_missing_docker(
+    repo: Path,
+    tmp_path: Path,
+) -> None:
+    stage_file(repo, "docs/safe-change.md")
+    env, _ = fake_tool_environment(tmp_path)
+
+    fake_bin = Path(env["PATH"].split(":")[0])
+    (fake_bin / "docker").unlink()
+
+    result = run_verifier(repo, "full", env=env)
+
+    assert result.returncode != 0
+    assert "Missing required command: docker" in result.stderr
