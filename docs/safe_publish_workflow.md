@@ -15,6 +15,10 @@ The workflow has two verification levels:
 
 ## Entry points
 
+The implementation is [`scripts/verify_publish.sh`](../scripts/verify_publish.sh).
+For the daily operator sequence, prerequisites, and failure guidance, see the
+[`development workflow`](development_workflow.md).
+
 Developers and automation use:
 
 ```bash
